@@ -1,0 +1,21 @@
+[package]
+name = "capsule_shooter"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
+# cargo install -f cargo-binutils
+# rustup component add llvm-tools-preview
+
+[dependencies]
+bevy = {version = "0.8.1", features = ["dynamic"] }
+bevy-inspector-egui = "0.12.1"
