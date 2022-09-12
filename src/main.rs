@@ -1,10 +1,17 @@
-use bevy::{prelude::*, render::{camera::{ScalingMode, RenderTarget}}};
+use bevy::{
+    prelude::*,
+    render::camera::{RenderTarget, ScalingMode},
+    sprite::collide_aabb::collide,
+};
+use rand::prelude::*;
 
 struct MouseWorldPos(Vec2);
 
 #[derive(Component)]
 struct Player;
 
+#[derive(Component)]
+struct Enemy;
 
 #[derive(Component)]
 struct Bullet {
@@ -16,13 +23,17 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_startup_system(setup)
         .add_startup_system(spawn_player)
+        .add_startup_system(spawn_enemies)
         .insert_resource(MouseWorldPos(Vec2::ZERO))
         .add_system(player_movement)
         .add_system(update_mouse_position)
         .add_system(shoot_bullet)
         .add_system(move_bullet)
+        .add_system(bullet_collision)
         .run();
 }
+
+// startup systems
 
 fn setup(mut commands: Commands) {
     commands.spawn_bundle(Camera2dBundle {
@@ -35,27 +46,49 @@ fn setup(mut commands: Commands) {
     });
 }
 
-fn spawn_player(
-    mut commands: Commands
-) {
-    commands.spawn_bundle(SpriteBundle {
-        sprite: Sprite {
-            color: Color::BLUE,
-            custom_size: Some(Vec2::new(50., 50.)),
+fn spawn_player(mut commands: Commands) {
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::BLUE,
+                custom_size: Some(Vec2::new(50., 50.)),
+                ..default()
+            },
+            transform: Transform::from_translation(Vec3::ZERO),
             ..default()
-        },
-        transform: Transform::from_translation(Vec3::ZERO),
-        ..default()
-    })
-    .insert(Player);
+        })
+        .insert(Player);
 }
 
+fn spawn_enemies(mut commands: Commands) {
+    let num = 5;
 
+    for _ in 0..num {
+        let mut rng = rand::thread_rng();
+        let spawn_pos = Vec2::new(rng.gen_range(-1.0..=1.0), rng.gen_range(-1.0..=1.0))
+            .normalize_or_zero()
+            .extend(0.)
+            * 200.;
+        commands
+            .spawn_bundle(SpriteBundle {
+                sprite: Sprite {
+                    color: Color::RED,
+                    custom_size: Some(Vec2::new(35., 35.)),
+                    ..default()
+                },
+                transform: Transform::from_translation(spawn_pos),
+                ..default()
+            })
+            .insert(Enemy);
+    }
+}
+
+// systems
 
 fn player_movement(
     keyboard_input: Res<Input<KeyCode>>,
     mut q_player: Query<&mut Transform, With<Player>>,
-    time: Res<Time>
+    time: Res<Time>,
 ) {
     let mut transform = q_player.single_mut();
     let mut move_input = Vec2::ZERO;
@@ -73,13 +106,14 @@ fn player_movement(
     }
 
     let move_speed = 350.;
-    transform.translation += move_input.normalize_or_zero().extend(0.) * time.delta_seconds() * move_speed;
+    transform.translation +=
+        move_input.normalize_or_zero().extend(0.) * time.delta_seconds() * move_speed;
 }
 
 fn update_mouse_position(
     windows: Res<Windows>,
     q_camera: Query<(&Camera, &GlobalTransform)>,
-    mut mouse_pos: ResMut<MouseWorldPos>
+    mut mouse_pos: ResMut<MouseWorldPos>,
 ) {
     let (camera, camera_transform) = q_camera.single();
 
@@ -117,30 +151,55 @@ fn shoot_bullet(
     if mouse_input.just_pressed(MouseButton::Left) {
         let dir = Vec2::new(
             mouse_pos.0.x - q_player.single().translation.x,
-            mouse_pos.0.y - q_player.single().translation.y, 
-        ).normalize_or_zero();
-        commands.spawn_bundle(SpriteBundle {
-            sprite: Sprite {
-                color: Color::rgb(0.25, 0.25, 0.75),
-                custom_size: Some(Vec2::new(10., 20.)),
+            mouse_pos.0.y - q_player.single().translation.y,
+        )
+        .normalize_or_zero();
+        commands
+            .spawn_bundle(SpriteBundle {
+                sprite: Sprite {
+                    color: Color::rgb(0.25, 0.25, 0.75),
+                    custom_size: Some(Vec2::new(10., 20.)),
+                    ..default()
+                },
+                transform: Transform {
+                    translation: q_player.single().translation.clone(),
+                    rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
+                    ..default()
+                },
                 ..default()
-            },
-            transform: Transform { 
-                translation: q_player.single().translation.clone(),
-                rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
-                ..default()
-             },
-            ..default()
-        }).insert(Bullet{dir});
+            })
+            .insert(Bullet { dir });
     }
 }
 
-fn move_bullet(
-    mut q_bullet: Query<(&mut Transform, &Bullet)>,
-    time: Res<Time>
-) {
+fn move_bullet(mut q_bullet: Query<(&mut Transform, &Bullet)>, time: Res<Time>) {
     for (mut transform, bullet) in &mut q_bullet {
         // vec2 to vec3 with extend
         transform.translation += (bullet.dir * time.delta_seconds() * 500.).extend(0.);
+    }
+}
+
+fn bullet_collision(
+    q_bullets: Query<(Entity, &Transform, &Sprite), With<Bullet>>,
+    q_enemies: Query<(Entity, &Transform, &Sprite), With<Enemy>>,
+    mut commands: Commands,
+) {
+    for (enemy, enemy_trans, enemy_sprite) in q_enemies.iter() {
+        for (bullet, bullet_trans, bullet_sprite) in q_bullets.iter() {
+            let collision = collide(
+                enemy_trans.translation,
+                enemy_sprite.custom_size.unwrap(),
+                bullet_trans.translation,
+                bullet_sprite.custom_size.unwrap(),
+            );
+
+            match collision {
+                Some(_) => {
+                    commands.entity(enemy).despawn();
+                    commands.entity(bullet).despawn();
+                }
+                _ => {}
+            }
+        }
     }
 }

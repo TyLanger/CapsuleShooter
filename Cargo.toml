@@ -19,3 +19,4 @@ opt-level = 3
 [dependencies]
 bevy = {version = "0.8.1", features = ["dynamic"] }
 bevy-inspector-egui = "0.12.1"
+rand = "0.8.5"
