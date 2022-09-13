@@ -3,8 +3,8 @@ use bevy::{
     render::camera::{RenderTarget, ScalingMode},
     sprite::collide_aabb::collide,
 };
-use rand::prelude::*;
 use bevy_rapier2d::prelude::*;
+use rand::prelude::*;
 
 struct MouseWorldPos(Vec2);
 
@@ -88,7 +88,7 @@ fn spawn_enemies(mut commands: Commands) {
             })
             .insert(Enemy)
             .insert(RigidBody::Dynamic)
-            .insert(Collider::cuboid(35.0/2.0, 35.0/2.0));
+            .insert(Collider::cuboid(35.0 / 2.0, 35.0 / 2.0));
     }
 }
 
@@ -207,7 +207,7 @@ fn _bullet_collision(
 
             // might want to do rapier instead
             // https://rapier.rs/docs/user_guides/bevy_plugin/getting_started_bevy
-            
+
             match collision {
                 Some(_) => {
                     commands.entity(enemy).despawn();
@@ -222,27 +222,45 @@ fn _bullet_collision(
 fn bullet_collision_rapier(
     rapier_context: Res<RapierContext>,
     q_bullets: Query<Entity, With<Bullet>>,
-    q_enemies: Query<Entity, With<Enemy>>,
+    //q_enemies: Query<Entity, With<Enemy>>,
     mut commands: Commands,
+    w: &World,
 ) {
     for bullet in q_bullets.iter() {
-        for enemy in q_enemies.iter() {
-            // loop over every bullet and every enemy looking for pairs
-            if rapier_context.intersection_pair(bullet, enemy) == Some(true) {
-                commands.entity(bullet).despawn();
-                commands.entity(enemy).despawn();
-            }
-        }
-
-        // check all the things the bullet has hit
-
-        // for (collider1, collider2, intersecting) in rapier_context.intersections_with(bullet)
-        // {
-        //     // i don't know how to check if the bullet hit an enemy
-        //     if intersecting {
-        //         commands.entity(collider1).despawn();
-        //         commands.entity(collider2).despawn();
+        // for enemy in q_enemies.iter() {
+        //     // loop over every bullet and every enemy looking for pairs
+        //     if rapier_context.intersection_pair(bullet, enemy) == Some(true) {
+        //         commands.entity(bullet).despawn();
+        //         commands.entity(enemy).despawn();
         //     }
         // }
+
+        // check all the things the bullet has hit
+        // I think this requires 1 thing to be Sensor
+        // like unity OnTriggerEnter
+        for (collider1, collider2, intersecting) in rapier_context.intersections_with(bullet) {
+            // check if they are actually intersecting
+            if intersecting {
+                // they aren't in a specific order
+                // figure out which one might be the enemy
+                let enemy_collider = if collider1 == bullet {
+                    collider2
+                } else {
+                    collider1
+                };
+
+                // try to find an enemy component
+                let enemy_component = w.entity(enemy_collider).get::<Enemy>();
+
+                // if an enemy component exists, destroy bullet and enemy
+                match enemy_component {
+                    Some(_) => {
+                        commands.entity(collider1).despawn();
+                        commands.entity(collider2).despawn();
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
