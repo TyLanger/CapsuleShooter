@@ -4,6 +4,7 @@ use bevy::{
     sprite::collide_aabb::collide,
 };
 use rand::prelude::*;
+use bevy_rapier2d::prelude::*;
 
 struct MouseWorldPos(Vec2);
 
@@ -21,15 +22,21 @@ struct Bullet {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
+        .add_plugin(RapierDebugRenderPlugin::default())
         .add_startup_system(setup)
         .add_startup_system(spawn_player)
         .add_startup_system(spawn_enemies)
         .insert_resource(MouseWorldPos(Vec2::ZERO))
+        .insert_resource(RapierConfiguration {
+            gravity: Vec2::ZERO,
+            ..default()
+        })
         .add_system(player_movement)
         .add_system(update_mouse_position)
         .add_system(shoot_bullet)
         .add_system(move_bullet)
-        .add_system(bullet_collision)
+        .add_system(bullet_collision_rapier)
         .run();
 }
 
@@ -79,7 +86,9 @@ fn spawn_enemies(mut commands: Commands) {
                 transform: Transform::from_translation(spawn_pos),
                 ..default()
             })
-            .insert(Enemy);
+            .insert(Enemy)
+            .insert(RigidBody::Dynamic)
+            .insert(Collider::cuboid(35.0/2.0, 35.0/2.0));
     }
 }
 
@@ -168,7 +177,10 @@ fn shoot_bullet(
                 },
                 ..default()
             })
-            .insert(Bullet { dir });
+            .insert(Bullet { dir })
+            .insert(RigidBody::Dynamic)
+            .insert(Collider::ball(5.0))
+            .insert(Sensor);
     }
 }
 
@@ -179,7 +191,7 @@ fn move_bullet(mut q_bullet: Query<(&mut Transform, &Bullet)>, time: Res<Time>) 
     }
 }
 
-fn bullet_collision(
+fn _bullet_collision(
     q_bullets: Query<(Entity, &Transform, &Sprite), With<Bullet>>,
     q_enemies: Query<(Entity, &Transform, &Sprite), With<Enemy>>,
     mut commands: Commands,
@@ -193,6 +205,9 @@ fn bullet_collision(
                 bullet_sprite.custom_size.unwrap(),
             );
 
+            // might want to do rapier instead
+            // https://rapier.rs/docs/user_guides/bevy_plugin/getting_started_bevy
+            
             match collision {
                 Some(_) => {
                     commands.entity(enemy).despawn();
@@ -201,5 +216,33 @@ fn bullet_collision(
                 _ => {}
             }
         }
+    }
+}
+
+fn bullet_collision_rapier(
+    rapier_context: Res<RapierContext>,
+    q_bullets: Query<Entity, With<Bullet>>,
+    q_enemies: Query<Entity, With<Enemy>>,
+    mut commands: Commands,
+) {
+    for bullet in q_bullets.iter() {
+        for enemy in q_enemies.iter() {
+            // loop over every bullet and every enemy looking for pairs
+            if rapier_context.intersection_pair(bullet, enemy) == Some(true) {
+                commands.entity(bullet).despawn();
+                commands.entity(enemy).despawn();
+            }
+        }
+
+        // check all the things the bullet has hit
+
+        // for (collider1, collider2, intersecting) in rapier_context.intersections_with(bullet)
+        // {
+        //     // i don't know how to check if the bullet hit an enemy
+        //     if intersecting {
+        //         commands.entity(collider1).despawn();
+        //         commands.entity(collider2).despawn();
+        //     }
+        // }
     }
 }
