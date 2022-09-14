@@ -6,7 +6,6 @@ use bevy::{
 use bevy_rapier2d::prelude::*;
 use rand::prelude::*;
 
-
 struct MouseWorldPos(Vec2);
 
 #[derive(Component)]
@@ -18,6 +17,16 @@ struct Enemy;
 #[derive(Component)]
 struct Bullet {
     dir: Vec2,
+    lifetime: Timer,
+}
+
+impl Bullet {
+    pub fn new(dir: Vec2) -> Self {
+        Self {
+            dir,
+            lifetime: Timer::from_seconds(3.0, false),
+        }
+    }
 }
 
 struct BulletHitEvent {
@@ -42,6 +51,7 @@ fn main() {
         .add_system(update_mouse_position)
         .add_system(shoot_bullet)
         .add_system(move_bullet)
+        .add_system(bullet_lifetime)
         .add_system(bullet_collision_rapier)
         .add_system(bullet_event)
         .run();
@@ -58,8 +68,6 @@ fn setup(mut commands: Commands) {
         },
         ..default()
     });
-
-
 }
 
 fn spawn_player(mut commands: Commands) {
@@ -186,7 +194,7 @@ fn shoot_bullet(
                 },
                 ..default()
             })
-            .insert(Bullet { dir })
+            .insert(Bullet::new(dir))
             .insert(RigidBody::Dynamic)
             .insert(Collider::ball(5.0))
             .insert(Sensor);
@@ -197,6 +205,18 @@ fn move_bullet(mut q_bullet: Query<(&mut Transform, &Bullet)>, time: Res<Time>) 
     for (mut transform, bullet) in &mut q_bullet {
         // vec2 to vec3 with extend
         transform.translation += (bullet.dir * time.delta_seconds() * 500.).extend(0.);
+    }
+}
+
+fn bullet_lifetime(
+    mut commands: Commands,
+    mut q_bullet: Query<(Entity, &mut Bullet)>,
+    time: Res<Time>,
+) {
+    for (entity, mut bullet) in &mut q_bullet {
+        if bullet.lifetime.tick(time.delta()).just_finished() {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -236,7 +256,6 @@ fn bullet_collision_rapier(
     //mut w: &mut World,
     mut ev_bullet_hit: EventWriter<BulletHitEvent>,
 ) {
-
     for bullet in q_bullets.iter() {
         for enemy in q_enemies.iter() {
             // loop over every bullet and every enemy looking for pairs
@@ -244,7 +263,7 @@ fn bullet_collision_rapier(
                 ev_bullet_hit.send(BulletHitEvent {
                     pos: bullet.1.translation.truncate(),
                 });
-                
+
                 commands.entity(bullet.0).despawn();
                 commands.entity(enemy).despawn();
             }
@@ -272,7 +291,7 @@ fn bullet_collision_rapier(
 
         //         let mut state: SystemState<
         //             EventWriter<BulletHitEvent>
-                    
+
         //             > = SystemState::new(&mut w);
 
         //         let ev_bullet_hit = state.get_mut(&mut w);
@@ -299,9 +318,7 @@ fn bullet_collision_rapier(
     }
 }
 
-fn bullet_event(
-    mut ev_bullet_hit: EventReader<BulletHitEvent>,
-) {
+fn bullet_event(mut ev_bullet_hit: EventReader<BulletHitEvent>) {
     for hit in ev_bullet_hit.iter() {
         eprintln!("Bullet hit at {:?}", hit.pos);
     }
