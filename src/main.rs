@@ -33,6 +33,14 @@ struct BulletHitEvent {
     pos: Vec2,
 }
 
+#[derive(Component)]
+struct Gun {
+    clip_size: u32,
+    shots_left: u32,
+    time_between_shots: f32,
+    reload_timer: Timer,
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -50,6 +58,7 @@ fn main() {
         .add_system(player_movement)
         .add_system(update_mouse_position)
         .add_system(shoot_bullet)
+        .add_system(reload)
         .add_system(move_bullet)
         .add_system(bullet_lifetime)
         .add_system(bullet_collision_rapier)
@@ -81,7 +90,14 @@ fn spawn_player(mut commands: Commands) {
             transform: Transform::from_translation(Vec3::ZERO),
             ..default()
         })
-        .insert(Player);
+        .insert(Player)
+        .insert(Collider::cuboid(25.0, 25.0))
+        .insert(Gun {
+            clip_size: 6,
+            shots_left: 6,
+            time_between_shots: 0.3,
+            reload_timer: Timer::from_seconds(2.0, true),
+        });
 }
 
 fn spawn_enemies(mut commands: Commands) {
@@ -105,6 +121,7 @@ fn spawn_enemies(mut commands: Commands) {
             })
             .insert(Enemy)
             .insert(RigidBody::Dynamic)
+            .insert(LockedAxes::ROTATION_LOCKED)
             .insert(Collider::cuboid(35.0 / 2.0, 35.0 / 2.0));
     }
 }
@@ -171,13 +188,24 @@ fn update_mouse_position(
 fn shoot_bullet(
     mut commands: Commands,
     mouse_input: Res<Input<MouseButton>>,
-    q_player: Query<&Transform, With<Player>>,
+    mut q_player: Query<(&Transform, &mut Gun), With<Player>>,
     mouse_pos: Res<MouseWorldPos>,
+    time: Res<Time>,
+    mut time_of_next_shot: Local<f32>,
 ) {
-    if mouse_input.just_pressed(MouseButton::Left) {
+    let (transform, mut gun) = q_player.single_mut();
+
+    let shot_timer_ok = time.time_since_startup().as_secs_f32() > *time_of_next_shot;
+    let has_shots = gun.shots_left > 0;
+    let button_pressed = mouse_input.pressed(MouseButton::Left);
+
+    if shot_timer_ok && has_shots && button_pressed {
+        gun.shots_left -= 1;
+        *time_of_next_shot = time.time_since_startup().as_secs_f32() + gun.time_between_shots;
+
         let dir = Vec2::new(
-            mouse_pos.0.x - q_player.single().translation.x,
-            mouse_pos.0.y - q_player.single().translation.y,
+            mouse_pos.0.x - transform.translation.x,
+            mouse_pos.0.y - transform.translation.y,
         )
         .normalize_or_zero();
         commands
@@ -188,7 +216,7 @@ fn shoot_bullet(
                     ..default()
                 },
                 transform: Transform {
-                    translation: q_player.single().translation.clone(),
+                    translation: transform.translation.clone(),
                     rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
                     ..default()
                 },
@@ -198,6 +226,20 @@ fn shoot_bullet(
             .insert(RigidBody::Dynamic)
             .insert(Collider::ball(5.0))
             .insert(Sensor);
+    }
+}
+
+fn reload(mut q_gun: Query<&mut Gun>, time: Res<Time>) {
+    let mut gun = q_gun.single_mut();
+
+    if gun.shots_left <= 0 {
+        //println!("Reloading {:?}", time.delta().as_secs_f32());
+        // take some time before you refill ammo
+        // this only runs when you are out of ammo
+        if gun.reload_timer.tick(time.delta()).just_finished() {
+            println!("Reload finished");
+            gun.shots_left = gun.clip_size;
+        }
     }
 }
 
