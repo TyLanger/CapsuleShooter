@@ -1,7 +1,7 @@
 use bevy::{prelude::*, sprite::collide_aabb::collide};
 use bevy_rapier2d::prelude::*;
 
-use crate::{Enemy, MouseWorldPos, Player};
+use crate::{Enemy, MouseWorldPos, Player, health::Health};
 
 #[derive(Component)]
 struct Bullet {
@@ -152,21 +152,22 @@ fn _bullet_collision(
 fn bullet_collision_rapier(
     rapier_context: Res<RapierContext>,
     q_bullets: Query<(Entity, &Transform), With<Bullet>>,
-    q_enemies: Query<Entity, With<Enemy>>,
+    mut q_enemies: Query<(Entity, &mut Health), With<Enemy>>,
     mut commands: Commands,
     //mut w: &mut World,
     mut ev_bullet_hit: EventWriter<BulletHitEvent>,
 ) {
     for bullet in q_bullets.iter() {
-        for enemy in q_enemies.iter() {
+        for (enemy, mut hp) in q_enemies.iter_mut() {
             // loop over every bullet and every enemy looking for pairs
             if rapier_context.intersection_pair(bullet.0, enemy) == Some(true) {
                 ev_bullet_hit.send(BulletHitEvent {
                     pos: bullet.1.translation.truncate(),
                 });
+                hp.take_damage(1);
 
                 commands.entity(bullet.0).despawn();
-                commands.entity(enemy).despawn();
+                //commands.entity(enemy).despawn();
             }
         }
 

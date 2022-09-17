@@ -6,6 +6,7 @@ use bevy_rapier2d::prelude::*;
 use rand::prelude::*;
 
 mod shooting;
+mod health;
 
 struct MouseWorldPos(Vec2);
 
@@ -21,6 +22,7 @@ fn main() {
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
         .add_plugin(RapierDebugRenderPlugin::default())
         .add_plugin(shooting::ShootingPlugin)
+        .add_plugin(health::HealthPlugin)
         .add_startup_system(setup)
         .add_startup_system(spawn_player)
         .add_startup_system(spawn_enemies)
@@ -65,7 +67,8 @@ fn spawn_player(mut commands: Commands) {
             shots_left: 6,
             time_between_shots: 0.3,
             reload_timer: Timer::from_seconds(2.0, true),
-        });
+        })
+        .insert(health::Health::new(100));
 }
 
 fn spawn_enemies(mut commands: Commands) {
@@ -88,6 +91,7 @@ fn spawn_enemies(mut commands: Commands) {
                 ..default()
             })
             .insert(Enemy)
+            .insert(health::Health::new(2))
             .insert(RigidBody::Dynamic)
             .insert(LockedAxes::ROTATION_LOCKED)
             .insert(Collider::cuboid(35.0 / 2.0, 35.0 / 2.0));
