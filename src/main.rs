@@ -3,18 +3,15 @@ use bevy::{
     render::camera::{RenderTarget, ScalingMode},
 };
 use bevy_rapier2d::prelude::*;
-use rand::prelude::*;
 
-mod shooting;
+mod enemy;
 mod health;
+mod shooting;
 
 struct MouseWorldPos(Vec2);
 
 #[derive(Component)]
 pub struct Player;
-
-#[derive(Component)]
-struct Enemy;
 
 fn main() {
     App::new()
@@ -22,10 +19,11 @@ fn main() {
         .add_plugin(RapierPhysicsPlugin::<NoUserData>::pixels_per_meter(100.0))
         .add_plugin(RapierDebugRenderPlugin::default())
         .add_plugin(shooting::ShootingPlugin)
+        .add_plugin(enemy::EnemyPlugin)
         .add_plugin(health::HealthPlugin)
         .add_startup_system(setup)
         .add_startup_system(spawn_player)
-        .add_startup_system(spawn_enemies)
+        //.add_startup_system(spawn_enemies)
         .insert_resource(MouseWorldPos(Vec2::ZERO))
         .insert_resource(RapierConfiguration {
             gravity: Vec2::ZERO,
@@ -69,33 +67,6 @@ fn spawn_player(mut commands: Commands) {
             reload_timer: Timer::from_seconds(2.0, true),
         })
         .insert(health::Health::new(100));
-}
-
-fn spawn_enemies(mut commands: Commands) {
-    let num = 5;
-
-    for _ in 0..num {
-        let mut rng = rand::thread_rng();
-        let spawn_pos = Vec2::new(rng.gen_range(-1.0..=1.0), rng.gen_range(-1.0..=1.0))
-            .normalize_or_zero()
-            .extend(0.)
-            * 200.;
-        commands
-            .spawn_bundle(SpriteBundle {
-                sprite: Sprite {
-                    color: Color::RED,
-                    custom_size: Some(Vec2::new(35., 35.)),
-                    ..default()
-                },
-                transform: Transform::from_translation(spawn_pos),
-                ..default()
-            })
-            .insert(Enemy)
-            .insert(health::Health::new(2))
-            .insert(RigidBody::Dynamic)
-            .insert(LockedAxes::ROTATION_LOCKED)
-            .insert(Collider::cuboid(35.0 / 2.0, 35.0 / 2.0));
-    }
 }
 
 // systems

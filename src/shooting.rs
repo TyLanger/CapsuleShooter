@@ -1,7 +1,7 @@
 use bevy::{prelude::*, sprite::collide_aabb::collide};
 use bevy_rapier2d::prelude::*;
 
-use crate::{Enemy, MouseWorldPos, Player, health::Health};
+use crate::{enemy::Enemy, health::Health, MouseWorldPos, Player};
 
 #[derive(Component)]
 struct Bullet {

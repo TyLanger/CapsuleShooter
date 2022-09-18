@@ -1,5 +1,5 @@
-use std::cmp::max;
 use bevy::prelude::*;
+use std::cmp::max;
 
 #[derive(Component)]
 pub struct Health {
@@ -9,14 +9,14 @@ pub struct Health {
 
 impl Health {
     pub fn new(hp: u32) -> Self {
-        Health { 
+        Health {
             max_health: hp,
             current_health: hp,
         }
     }
 
     pub fn take_damage(&mut self, damage: u32) {
-        self.current_health = max(0, self.current_health-damage);
+        self.current_health = max(0, self.current_health - damage);
     }
 }
 
@@ -31,10 +31,7 @@ impl Plugin for HealthPlugin {
 //pub struct death_event;
 // ref to entity?
 
-fn death(
-    mut commands: Commands,
-    q_health: Query<(Entity, &Health)>,
-) {
+fn death(mut commands: Commands, q_health: Query<(Entity, &Health)>) {
     for (ent, hp) in q_health.iter() {
         if hp.current_health == 0 {
             commands.entity(ent).despawn();
