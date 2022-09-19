@@ -16,7 +16,16 @@ impl Health {
     }
 
     pub fn take_damage(&mut self, damage: u32) {
-        self.current_health = max(0, self.current_health - damage);
+        if damage > self.current_health {
+            self.current_health = 0;
+        } else {
+            self.current_health -= damage;
+        }
+        // underflows
+        // tried to use max so it wouldn't
+        // but I missed that current - damage can overflow too
+        // and max doesn't like that
+        //self.current_health = max(0, self.current_health - damage);
     }
 }
 

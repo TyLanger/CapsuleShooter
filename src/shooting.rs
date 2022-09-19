@@ -3,6 +3,23 @@ use bevy_rapier2d::prelude::*;
 
 use crate::{enemy::Enemy, health::Health, MouseWorldPos, Player};
 
+pub struct ShootingPlugin;
+
+impl Plugin for ShootingPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_event::<BulletHitEvent>()
+            .add_event::<ShotgunBulletHitEvent>()
+            .add_event::<ShotgunBulletExpireEvent>()
+            .add_system(shoot_bullet)
+            .add_system(reload)
+            .add_system(move_bullet)
+            .add_system(bullet_lifetime)
+            .add_system(bullet_collision_rapier)
+            .add_system(bullet_event)
+            .add_system(shotgun_event);
+    }
+}
+
 #[derive(Component)]
 struct Bullet {
     dir: Vec2,
@@ -30,36 +47,74 @@ pub struct Gun {
     pub reload_timer: Timer,
 }
 
-pub struct ShootingPlugin;
+pub struct ShotgunBulletHitEvent {
+    side: BulletSide,
+    shot_number: u32,
+}
 
-impl Plugin for ShootingPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_event::<BulletHitEvent>()
-            .add_system(shoot_bullet)
-            .add_system(reload)
-            .add_system(move_bullet)
-            .add_system(bullet_lifetime)
-            .add_system(bullet_collision_rapier)
-            .add_system(bullet_event);
+struct ShotgunBulletExpireEvent {
+    side: BulletSide,
+    shot_number: u32,
+}
+
+#[derive(Component)]
+pub struct Shotgun;
+
+#[derive(Component)]
+struct ShotgunBullet {
+    side: BulletSide,
+    shot_number: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BulletSide {
+    Left,
+    Right,
+}
+
+// component struct ShotgunGauge
+// vec![num_bullets] of HitPair
+// struct HitPair
+// left: Option<bool>
+// right: Option<bool>
+// get_both_hit -> Option<bool>
+// none if still waiting
+// query<Gauge>
+// eventReader
+// when event happens, add to gauge
+#[derive(Component)]
+struct ShotgunGauge {
+    hit_pairs: Vec<HitPair>,
+}
+
+impl ShotgunGauge {
+    fn new(size: usize) -> Self {
+        ShotgunGauge {
+            hit_pairs: Vec::with_capacity(size),
+        }
     }
+}
+
+struct HitPair {
+    left: Option<bool>,
+    right: Option<bool>,
 }
 
 fn shoot_bullet(
     mut commands: Commands,
     mouse_input: Res<Input<MouseButton>>,
-    mut q_player: Query<(&Transform, &mut Gun), With<Player>>,
+    mut q_player: Query<(&Transform, &mut Gun, Option<&Shotgun>), With<Player>>,
     mouse_pos: Res<MouseWorldPos>,
     time: Res<Time>,
     mut time_of_next_shot: Local<f32>,
 ) {
-    let (transform, mut gun) = q_player.single_mut();
+    let (transform, mut gun, shotgun) = q_player.single_mut();
 
     let shot_timer_ok = time.time_since_startup().as_secs_f32() > *time_of_next_shot;
     let has_shots = gun.shots_left > 0;
     let button_pressed = mouse_input.pressed(MouseButton::Left);
 
     if shot_timer_ok && has_shots && button_pressed {
-        gun.shots_left -= 1;
         *time_of_next_shot = time.time_since_startup().as_secs_f32() + gun.time_between_shots;
 
         let dir = Vec2::new(
@@ -67,24 +122,81 @@ fn shoot_bullet(
             mouse_pos.0.y - transform.translation.y,
         )
         .normalize_or_zero();
-        commands
-            .spawn_bundle(SpriteBundle {
-                sprite: Sprite {
-                    color: Color::rgb(0.25, 0.25, 0.75),
-                    custom_size: Some(Vec2::new(10., 20.)),
+
+        if let Some(_shotgun) = shotgun {
+            // shoot like a shotgun
+            // degress to radians
+            // pi / 180 = 0.0174533
+            let left_dir = Quat::mul_vec3(Quat::from_rotation_z(8. * 0.0174533), dir.extend(0.0));
+            let right_dir = Quat::mul_vec3(Quat::from_rotation_z(-8. * 0.0174533), dir.extend(0.0));
+
+            commands
+                .spawn_bundle(SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::rgb(0.25, 0.25, 0.75),
+                        custom_size: Some(Vec2::new(10., 20.)),
+                        ..default()
+                    },
+                    transform: Transform {
+                        translation: transform.translation.clone(),
+                        rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
+                        ..default()
+                    },
                     ..default()
-                },
-                transform: Transform {
-                    translation: transform.translation.clone(),
-                    rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
+                })
+                .insert(Bullet::new(left_dir.truncate()))
+                .insert(ShotgunBullet {
+                    side: BulletSide::Left,
+                    shot_number: gun.clip_size - gun.shots_left,
+                })
+                .insert(RigidBody::Dynamic)
+                .insert(Collider::ball(5.0))
+                .insert(Sensor);
+
+            commands
+                .spawn_bundle(SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::rgb(0.25, 0.25, 0.75),
+                        custom_size: Some(Vec2::new(10., 20.)),
+                        ..default()
+                    },
+                    transform: Transform {
+                        translation: transform.translation.clone(),
+                        rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
+                        ..default()
+                    },
                     ..default()
-                },
-                ..default()
-            })
-            .insert(Bullet::new(dir))
-            .insert(RigidBody::Dynamic)
-            .insert(Collider::ball(5.0))
-            .insert(Sensor);
+                })
+                .insert(Bullet::new(right_dir.truncate()))
+                .insert(ShotgunBullet {
+                    side: BulletSide::Right,
+                    shot_number: gun.clip_size - gun.shots_left,
+                })
+                .insert(RigidBody::Dynamic)
+                .insert(Collider::ball(5.0))
+                .insert(Sensor);
+        } else {
+            commands
+                .spawn_bundle(SpriteBundle {
+                    sprite: Sprite {
+                        color: Color::rgb(0.25, 0.25, 0.75),
+                        custom_size: Some(Vec2::new(10., 20.)),
+                        ..default()
+                    },
+                    transform: Transform {
+                        translation: transform.translation.clone(),
+                        rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
+                        ..default()
+                    },
+                    ..default()
+                })
+                .insert(Bullet::new(dir))
+                .insert(RigidBody::Dynamic)
+                .insert(Collider::ball(5.0))
+                .insert(Sensor);
+        }
+
+        gun.shots_left -= 1;
     }
 }
 
@@ -111,11 +223,18 @@ fn move_bullet(mut q_bullet: Query<(&mut Transform, &Bullet)>, time: Res<Time>) 
 
 fn bullet_lifetime(
     mut commands: Commands,
-    mut q_bullet: Query<(Entity, &mut Bullet)>,
+    mut q_bullet: Query<(Entity, &mut Bullet, Option<&ShotgunBullet>)>,
+    mut ev_shotgun_expire: EventWriter<ShotgunBulletExpireEvent>,
     time: Res<Time>,
 ) {
-    for (entity, mut bullet) in &mut q_bullet {
+    for (entity, mut bullet, shotgun) in &mut q_bullet {
         if bullet.lifetime.tick(time.delta()).just_finished() {
+            if let Some(shotgun) = shotgun {
+                ev_shotgun_expire.send(ShotgunBulletExpireEvent {
+                    side: shotgun.side,
+                    shot_number: shotgun.shot_number,
+                });
+            }
             commands.entity(entity).despawn();
         }
     }
@@ -151,16 +270,25 @@ fn _bullet_collision(
 
 fn bullet_collision_rapier(
     rapier_context: Res<RapierContext>,
-    q_bullets: Query<(Entity, &Transform), With<Bullet>>,
+    q_bullets: Query<(Entity, &Transform, Option<&ShotgunBullet>), With<Bullet>>,
     mut q_enemies: Query<(Entity, &mut Health), With<Enemy>>,
     mut commands: Commands,
     //mut w: &mut World,
     mut ev_bullet_hit: EventWriter<BulletHitEvent>,
+    mut ev_shotgun_hit: EventWriter<ShotgunBulletHitEvent>,
 ) {
     for bullet in q_bullets.iter() {
         for (enemy, mut hp) in q_enemies.iter_mut() {
             // loop over every bullet and every enemy looking for pairs
             if rapier_context.intersection_pair(bullet.0, enemy) == Some(true) {
+                if let Some(shotgun) = bullet.2 {
+                    //println!("Hit on side: {:?}", shotgun.side);
+                    ev_shotgun_hit.send(ShotgunBulletHitEvent {
+                        side: shotgun.side,
+                        shot_number: shotgun.shot_number,
+                    });
+                }
+
                 ev_bullet_hit.send(BulletHitEvent {
                     pos: bullet.1.translation.truncate(),
                 });
@@ -224,4 +352,72 @@ fn bullet_event(mut ev_bullet_hit: EventReader<BulletHitEvent>) {
     for hit in ev_bullet_hit.iter() {
         eprintln!("Bullet hit at {:?}", hit.pos);
     }
+}
+
+fn shotgun_event(mut ev_shotgun_hit: EventReader<ShotgunBulletHitEvent>) {
+    for hit in ev_shotgun_hit.iter() {
+        eprintln!(
+            "Shotgun hit on {:?} side. Number: {:?}",
+            hit.side, hit.shot_number
+        );
+    }
+}
+
+fn shotgun_both_hit(
+    mut ev_shotgun_hit: EventReader<ShotgunBulletHitEvent>,
+    mut ev_shotgun_expire: EventReader<ShotgunBulletExpireEvent>,
+    mut q_gauge: Query<&mut ShotgunGauge>,
+) {
+    let mut gauge = q_gauge.single_mut();
+
+    for hit in ev_shotgun_hit.iter() {
+        match hit.side {
+            BulletSide::Left => {
+                gauge.hit_pairs[hit.shot_number as usize].left = Some(true);
+            }
+            BulletSide::Right => {
+                gauge.hit_pairs[hit.shot_number as usize].right = Some(true);
+            }
+        }
+    }
+
+    for expire in ev_shotgun_expire.iter() {
+        match expire.side {
+            BulletSide::Left => {
+                gauge.hit_pairs[expire.shot_number as usize].left = Some(false);
+            }
+            BulletSide::Right => {
+                gauge.hit_pairs[expire.shot_number as usize].left = Some(false);
+            }
+        }
+    }
+    // when something hits or expires
+    // set the state
+    // then wait for the second one
+    // when we have them both,
+    // check if both hit or exactly one or whatever we're doing
+    // need to do this for each generation
+    // reset on reload?
+    // might not work right
+    // can i guarantee bullets are done when you finish reload?
+    // probably not.
+
+    // component struct ShotgunGauge
+    // vec![num_bullets] of HitPair
+    // struct HitPair
+    // left: Option<bool>
+    // right: Option<bool>
+    // get_both_hit -> Option<bool>
+    // none if still waiting
+    // query<Gauge>
+    // eventReader
+    // when event happens, add to gauge
+
+    // Version 2
+    // bullets are given ref to each other
+    // first bullet to hit sends message to other bullet
+    // if they expire, no message bc they expire at the same time
+    // if other.hit
+    // event.send(both hit)
+    // event.send(one hit)
 }

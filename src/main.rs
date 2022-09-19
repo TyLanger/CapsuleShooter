@@ -66,6 +66,7 @@ fn spawn_player(mut commands: Commands) {
             time_between_shots: 0.3,
             reload_timer: Timer::from_seconds(2.0, true),
         })
+        .insert(shooting::Shotgun)
         .insert(health::Health::new(100));
 }
 
