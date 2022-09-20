@@ -16,7 +16,9 @@ impl Plugin for ShootingPlugin {
             .add_system(bullet_lifetime)
             .add_system(bullet_collision_rapier)
             .add_system(bullet_event)
-            .add_system(shotgun_event);
+            .add_system(shotgun_event)
+            .add_system(shotgun_check_shots)
+            .add_system(shotgun_check_gauge);
     }
 }
 
@@ -83,15 +85,19 @@ enum BulletSide {
 // eventReader
 // when event happens, add to gauge
 #[derive(Component)]
-struct ShotgunGauge {
+pub struct ShotgunGauge {
     hit_pairs: Vec<HitPair>,
 }
 
 impl ShotgunGauge {
-    fn new(size: usize) -> Self {
-        ShotgunGauge {
+    pub fn new(size: usize) -> Self {
+        let mut gauge = ShotgunGauge {
             hit_pairs: Vec::with_capacity(size),
+        };
+        for _ in 0..size {
+            gauge.hit_pairs.push(HitPair::new());
         }
+        gauge
     }
 }
 
@@ -100,15 +106,32 @@ struct HitPair {
     right: Option<bool>,
 }
 
+impl HitPair {
+    fn new() -> Self {
+        HitPair {
+            left: None,
+            right: None,
+        }
+    }
+}
+
 fn shoot_bullet(
     mut commands: Commands,
     mouse_input: Res<Input<MouseButton>>,
-    mut q_player: Query<(&Transform, &mut Gun, Option<&Shotgun>), With<Player>>,
+    mut q_player: Query<
+        (
+            &Transform,
+            &mut Gun,
+            Option<&Shotgun>,
+            Option<&mut ShotgunGauge>,
+        ),
+        With<Player>,
+    >,
     mouse_pos: Res<MouseWorldPos>,
     time: Res<Time>,
     mut time_of_next_shot: Local<f32>,
 ) {
-    let (transform, mut gun, shotgun) = q_player.single_mut();
+    let (transform, mut gun, shotgun, gauge) = q_player.single_mut();
 
     let shot_timer_ok = time.time_since_startup().as_secs_f32() > *time_of_next_shot;
     let has_shots = gun.shots_left > 0;
@@ -129,6 +152,14 @@ fn shoot_bullet(
             // pi / 180 = 0.0174533
             let left_dir = Quat::mul_vec3(Quat::from_rotation_z(8. * 0.0174533), dir.extend(0.0));
             let right_dir = Quat::mul_vec3(Quat::from_rotation_z(-8. * 0.0174533), dir.extend(0.0));
+
+            // reset the tracking on this shot number
+            if let Some(mut gauge) = gauge {
+                gauge.hit_pairs[(gun.clip_size - gun.shots_left) as usize] = HitPair {
+                    left: None,
+                    right: None,
+                };
+            }
 
             commands
                 .spawn_bundle(SpriteBundle {
@@ -363,7 +394,7 @@ fn shotgun_event(mut ev_shotgun_hit: EventReader<ShotgunBulletHitEvent>) {
     }
 }
 
-fn shotgun_both_hit(
+fn shotgun_check_shots(
     mut ev_shotgun_hit: EventReader<ShotgunBulletHitEvent>,
     mut ev_shotgun_expire: EventReader<ShotgunBulletExpireEvent>,
     mut q_gauge: Query<&mut ShotgunGauge>,
@@ -387,7 +418,7 @@ fn shotgun_both_hit(
                 gauge.hit_pairs[expire.shot_number as usize].left = Some(false);
             }
             BulletSide::Right => {
-                gauge.hit_pairs[expire.shot_number as usize].left = Some(false);
+                gauge.hit_pairs[expire.shot_number as usize].right = Some(false);
             }
         }
     }
@@ -397,10 +428,13 @@ fn shotgun_both_hit(
     // when we have them both,
     // check if both hit or exactly one or whatever we're doing
     // need to do this for each generation
-    // reset on reload?
+    // reset on reload? Reset on a new shot
     // might not work right
     // can i guarantee bullets are done when you finish reload?
     // probably not.
+    // but each shot is independant. Shot 0 is different than shot 4.
+    // you'd have to cycle through all shots, reload and shoot again
+    // all before the og shots terminated to conflict
 
     // component struct ShotgunGauge
     // vec![num_bullets] of HitPair
@@ -413,6 +447,9 @@ fn shotgun_both_hit(
     // eventReader
     // when event happens, add to gauge
 
+    // got version 1 to work
+    // but v2 might be better?
+
     // Version 2
     // bullets are given ref to each other
     // first bullet to hit sends message to other bullet
@@ -420,4 +457,29 @@ fn shotgun_both_hit(
     // if other.hit
     // event.send(both hit)
     // event.send(one hit)
+}
+
+fn shotgun_check_gauge(mut q_gauge: Query<&mut ShotgunGauge>) {
+    let mut gauge = q_gauge.single_mut();
+
+    for (i, pair) in gauge.hit_pairs.iter_mut().enumerate() {
+        // check if both have something
+        if let Some(left) = pair.left {
+            if let Some(right) = pair.right {
+                // for 2 bools, only 4 options
+                if left && right {
+                    println!("Both hit. Shot: {:?}", i);
+                } else if !left && !right {
+                    println!("Both missed. Shot: {:?}", i);
+                } else if left {
+                    println!("Only left hit. Shot: {:?}", i);
+                } else {
+                    println!("Only right hit. Shot: {:?}", i);
+                }
+
+                // done once, now clean up the hit_pairs so it doesn't print forever
+                *pair = HitPair::new();
+            }
+        }
+    }
 }

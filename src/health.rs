@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use std::cmp::max;
 
 #[derive(Component)]
 pub struct Health {
