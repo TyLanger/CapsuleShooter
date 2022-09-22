@@ -7,6 +7,7 @@ use bevy_rapier2d::prelude::*;
 mod enemy;
 mod health;
 mod shooting;
+mod cartridge;
 
 struct MouseWorldPos(Vec2);
 
@@ -21,6 +22,7 @@ fn main() {
         .add_plugin(shooting::ShootingPlugin)
         .add_plugin(enemy::EnemyPlugin)
         .add_plugin(health::HealthPlugin)
+        .add_plugin(cartridge::CartridgePlugin)
         .add_startup_system(setup)
         .add_startup_system(spawn_player)
         //.add_startup_system(spawn_enemies)
