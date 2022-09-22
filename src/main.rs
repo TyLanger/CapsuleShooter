@@ -4,10 +4,10 @@ use bevy::{
 };
 use bevy_rapier2d::prelude::*;
 
+mod cartridge;
 mod enemy;
 mod health;
 mod shooting;
-mod cartridge;
 
 struct MouseWorldPos(Vec2);
 

@@ -1,7 +1,7 @@
 use bevy::{prelude::*, sprite::collide_aabb::collide};
 use bevy_rapier2d::prelude::*;
 
-use crate::{enemy::Enemy, health::Health, MouseWorldPos, Player};
+use crate::{cartridge::Cartridge, enemy::Enemy, health::Health, MouseWorldPos, Player};
 
 pub struct ShootingPlugin;
 
@@ -26,6 +26,7 @@ impl Plugin for ShootingPlugin {
 struct Bullet {
     dir: Vec2,
     lifetime: Timer,
+    damage: u32,
 }
 
 impl Bullet {
@@ -33,7 +34,26 @@ impl Bullet {
         Self {
             dir,
             lifetime: Timer::from_seconds(3.0, false),
+            damage: 1,
         }
+    }
+
+    // pub fn new_with_damage(dir: Vec2, damage: u32) -> Self {
+    //     // this doesn't seem to be the right way to do this...
+    //     // am I supposed to use ..default()???
+    //     // or chain it like:
+    //     // would change_damage be -> &mut self?? 
+    //     // Bullet::new(dir).change_damage(new_damage) 
+    //     let mut b = Bullet::new(dir);
+    //     b.damage = damage;
+    //     b
+    // }
+
+    fn change_damage(mut self, damage: u32) -> Self {
+        // allows chaining
+        // new(dir).change_damage(5)
+        self.damage = damage;
+        self
     }
 }
 
@@ -124,6 +144,7 @@ fn shoot_bullet(
             &mut Gun,
             Option<&Shotgun>,
             Option<&mut ShotgunGauge>,
+            Option<&mut Cartridge>,
         ),
         With<Player>,
     >,
@@ -131,7 +152,7 @@ fn shoot_bullet(
     time: Res<Time>,
     mut time_of_next_shot: Local<f32>,
 ) {
-    let (transform, mut gun, shotgun, gauge) = q_player.single_mut();
+    let (transform, mut gun, shotgun, gauge, cart) = q_player.single_mut();
 
     let shot_timer_ok = time.time_since_startup().as_secs_f32() > *time_of_next_shot;
     let has_shots = gun.shots_left > 0;
@@ -145,6 +166,9 @@ fn shoot_bullet(
             mouse_pos.0.y - transform.translation.y,
         )
         .normalize_or_zero();
+
+        // do more damage if you have a cart attached
+        let damage = if let Some(_) = cart { 2 } else { 1 };
 
         if let Some(_shotgun) = shotgun {
             // shoot like a shotgun
@@ -175,7 +199,7 @@ fn shoot_bullet(
                     },
                     ..default()
                 })
-                .insert(Bullet::new(left_dir.truncate()))
+                .insert(Bullet::new(left_dir.truncate()).change_damage(damage))
                 .insert(ShotgunBullet {
                     side: BulletSide::Left,
                     shot_number: gun.clip_size - gun.shots_left,
@@ -198,7 +222,7 @@ fn shoot_bullet(
                     },
                     ..default()
                 })
-                .insert(Bullet::new(right_dir.truncate()))
+                .insert(Bullet::new(right_dir.truncate()).change_damage(damage))
                 .insert(ShotgunBullet {
                     side: BulletSide::Right,
                     shot_number: gun.clip_size - gun.shots_left,
@@ -221,7 +245,7 @@ fn shoot_bullet(
                     },
                     ..default()
                 })
-                .insert(Bullet::new(dir))
+                .insert(Bullet::new(dir).change_damage(damage))
                 .insert(RigidBody::Dynamic)
                 .insert(Collider::ball(5.0))
                 .insert(Sensor);
@@ -301,7 +325,7 @@ fn _bullet_collision(
 
 fn bullet_collision_rapier(
     rapier_context: Res<RapierContext>,
-    q_bullets: Query<(Entity, &Transform, Option<&ShotgunBullet>), With<Bullet>>,
+    q_bullets: Query<(Entity, &Transform, &Bullet, Option<&ShotgunBullet>)>,
     mut q_enemies: Query<(Entity, &mut Health), With<Enemy>>,
     mut commands: Commands,
     //mut w: &mut World,
@@ -312,7 +336,7 @@ fn bullet_collision_rapier(
         for (enemy, mut hp) in q_enemies.iter_mut() {
             // loop over every bullet and every enemy looking for pairs
             if rapier_context.intersection_pair(bullet.0, enemy) == Some(true) {
-                if let Some(shotgun) = bullet.2 {
+                if let Some(shotgun) = bullet.3 {
                     //println!("Hit on side: {:?}", shotgun.side);
                     ev_shotgun_hit.send(ShotgunBulletHitEvent {
                         side: shotgun.side,
@@ -323,7 +347,7 @@ fn bullet_collision_rapier(
                 ev_bullet_hit.send(BulletHitEvent {
                     pos: bullet.1.translation.truncate(),
                 });
-                hp.take_damage(1);
+                hp.take_damage(bullet.2.damage);
 
                 commands.entity(bullet.0).despawn();
                 //commands.entity(enemy).despawn();

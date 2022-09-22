@@ -1,4 +1,4 @@
-use bevy::{prelude::*};
+use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
 
 use crate::Player;
@@ -15,10 +15,12 @@ impl Plugin for CartridgePlugin {
 #[derive(Component)]
 struct CartridgePickup;
 
+#[derive(Component)]
+pub struct Cartridge {
+    power: usize,
+}
 
-fn spawn_cart_pickup(
-    mut commands: Commands,
-) {
+fn spawn_cart_pickup(mut commands: Commands) {
     commands
         .spawn_bundle(SpriteBundle {
             sprite: Sprite {
@@ -44,13 +46,13 @@ fn check_pickup(
     q_cart: Query<(Entity, &Transform), With<CartridgePickup>>,
     q_player: Query<(Entity, &Transform), With<Player>>,
 ) {
-
     let player = q_player.single();
 
     for cart in q_cart.iter() {
         if rapier_context.intersection_pair(cart.0, player.0) == Some(true) {
             println!("Player picked up the cartridge");
             commands.entity(cart.0).despawn();
+            commands.entity(player.0).insert(Cartridge { power: 100 });
         }
     }
 }
