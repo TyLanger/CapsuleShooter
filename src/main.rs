@@ -63,10 +63,13 @@ fn spawn_player(mut commands: Commands) {
         .insert(Player)
         .insert(Collider::cuboid(25.0, 25.0))
         .insert(shooting::Gun {
-            clip_size: 6,
-            shots_left: 6,
+            clip_size: 2,
+            shots_left: 2,
             time_between_shots: 0.3,
             reload_timer: Timer::from_seconds(2.0, true),
+            state: shooting::GunState::Ready,
+            damage: 1,
+            bullet_lifetime: 1.0,
         })
         .insert(shooting::Shotgun)
         .insert(shooting::ShotgunGauge::new(6))

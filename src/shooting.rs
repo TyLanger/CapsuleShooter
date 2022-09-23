@@ -1,4 +1,4 @@
-use bevy::{prelude::*, sprite::collide_aabb::collide};
+use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
 
 use crate::{cartridge::Cartridge, enemy::Enemy, health::Health, MouseWorldPos, Player};
@@ -10,8 +10,10 @@ impl Plugin for ShootingPlugin {
         app.add_event::<BulletHitEvent>()
             .add_event::<ShotgunBulletHitEvent>()
             .add_event::<ShotgunBulletExpireEvent>()
+            .add_event::<ImmediateReloadEvent>()
             .add_system(shoot_bullet)
             .add_system(reload)
+            .add_system(immediate_reload)
             .add_system(move_bullet)
             .add_system(bullet_lifetime)
             .add_system(bullet_collision_rapier)
@@ -30,11 +32,11 @@ struct Bullet {
 }
 
 impl Bullet {
-    pub fn new(dir: Vec2) -> Self {
+    pub fn new(dir: Vec2, lifetime: f32, damage: u32) -> Self {
         Self {
             dir,
-            lifetime: Timer::from_seconds(3.0, false),
-            damage: 1,
+            lifetime: Timer::from_seconds(lifetime, false),
+            damage,
         }
     }
 
@@ -42,8 +44,8 @@ impl Bullet {
     //     // this doesn't seem to be the right way to do this...
     //     // am I supposed to use ..default()???
     //     // or chain it like:
-    //     // would change_damage be -> &mut self?? 
-    //     // Bullet::new(dir).change_damage(new_damage) 
+    //     // would change_damage be -> &mut self??
+    //     // Bullet::new(dir).change_damage(new_damage)
     //     let mut b = Bullet::new(dir);
     //     b.damage = damage;
     //     b
@@ -67,6 +69,21 @@ pub struct Gun {
     pub shots_left: u32,
     pub time_between_shots: f32,
     pub reload_timer: Timer,
+    pub state: GunState,
+    pub damage: u32,
+    pub bullet_lifetime: f32,
+}
+
+// Ready when you have bullets and aren't waiting for time between shots
+// switch to reloading when you run out of ammo
+// shooting when you click and while waiting for time between shots?
+// is this necessary?
+// shooting might also be useful for slowing you or restricting your aim?
+#[derive(PartialEq)]
+pub enum GunState {
+    Ready,
+    Reloading,
+    Shooting,
 }
 
 pub struct ShotgunBulletHitEvent {
@@ -78,6 +95,8 @@ struct ShotgunBulletExpireEvent {
     side: BulletSide,
     shot_number: u32,
 }
+
+struct ImmediateReloadEvent;
 
 #[derive(Component)]
 pub struct Shotgun;
@@ -168,14 +187,14 @@ fn shoot_bullet(
         .normalize_or_zero();
 
         // do more damage if you have a cart attached
-        let damage = if let Some(_) = cart { 2 } else { 1 };
+        let damage = if let Some(_) = cart { 2 } else { gun.damage };
 
         if let Some(_shotgun) = shotgun {
             // shoot like a shotgun
             // degress to radians
             // pi / 180 = 0.0174533
-            let left_dir = Quat::mul_vec3(Quat::from_rotation_z(8. * 0.0174533), dir.extend(0.0));
-            let right_dir = Quat::mul_vec3(Quat::from_rotation_z(-8. * 0.0174533), dir.extend(0.0));
+            let left_dir = Quat::mul_vec3(Quat::from_rotation_z(6. * 0.0174533), dir.extend(0.0));
+            let right_dir = Quat::mul_vec3(Quat::from_rotation_z(-6. * 0.0174533), dir.extend(0.0));
 
             // reset the tracking on this shot number
             if let Some(mut gauge) = gauge {
@@ -199,7 +218,11 @@ fn shoot_bullet(
                     },
                     ..default()
                 })
-                .insert(Bullet::new(left_dir.truncate()).change_damage(damage))
+                .insert(Bullet::new(
+                    left_dir.truncate(),
+                    gun.bullet_lifetime,
+                    damage,
+                ))
                 .insert(ShotgunBullet {
                     side: BulletSide::Left,
                     shot_number: gun.clip_size - gun.shots_left,
@@ -222,7 +245,11 @@ fn shoot_bullet(
                     },
                     ..default()
                 })
-                .insert(Bullet::new(right_dir.truncate()).change_damage(damage))
+                .insert(Bullet::new(
+                    right_dir.truncate(),
+                    gun.bullet_lifetime,
+                    damage,
+                ))
                 .insert(ShotgunBullet {
                     side: BulletSide::Right,
                     shot_number: gun.clip_size - gun.shots_left,
@@ -245,34 +272,49 @@ fn shoot_bullet(
                     },
                     ..default()
                 })
-                .insert(Bullet::new(dir).change_damage(damage))
+                .insert(Bullet::new(dir, gun.bullet_lifetime, damage))
                 .insert(RigidBody::Dynamic)
                 .insert(Collider::ball(5.0))
                 .insert(Sensor);
         }
 
         gun.shots_left -= 1;
+        if gun.shots_left <= 0 {
+            gun.state = GunState::Reloading;
+            //gun.reload_timer = Timer::from_seconds(duration, repeating)
+        }
     }
 }
 
 fn reload(mut q_gun: Query<&mut Gun>, time: Res<Time>) {
     let mut gun = q_gun.single_mut();
 
-    if gun.shots_left <= 0 {
+    if gun.state == GunState::Reloading {
+        //if gun.shots_left <= 0 {
         //println!("Reloading {:?}", time.delta().as_secs_f32());
         // take some time before you refill ammo
         // this only runs when you are out of ammo
         if gun.reload_timer.tick(time.delta()).just_finished() {
             println!("Reload finished");
             gun.shots_left = gun.clip_size;
+            gun.state = GunState::Ready;
         }
+    }
+}
+
+fn immediate_reload(mut q_gun: Query<&mut Gun>, mut ev_reload: EventReader<ImmediateReloadEvent>) {
+    for _ in ev_reload.iter() {
+        let mut gun = q_gun.single_mut();
+
+        gun.shots_left = gun.clip_size;
+        gun.state = GunState::Ready;
     }
 }
 
 fn move_bullet(mut q_bullet: Query<(&mut Transform, &Bullet)>, time: Res<Time>) {
     for (mut transform, bullet) in &mut q_bullet {
         // vec2 to vec3 with extend
-        transform.translation += (bullet.dir * time.delta_seconds() * 500.).extend(0.);
+        transform.translation += (bullet.dir * time.delta_seconds() * 700.).extend(0.);
     }
 }
 
@@ -291,34 +333,6 @@ fn bullet_lifetime(
                 });
             }
             commands.entity(entity).despawn();
-        }
-    }
-}
-
-fn _bullet_collision(
-    q_bullets: Query<(Entity, &Transform, &Sprite), With<Bullet>>,
-    q_enemies: Query<(Entity, &Transform, &Sprite), With<Enemy>>,
-    mut commands: Commands,
-) {
-    for (enemy, enemy_trans, enemy_sprite) in q_enemies.iter() {
-        for (bullet, bullet_trans, bullet_sprite) in q_bullets.iter() {
-            let collision = collide(
-                enemy_trans.translation,
-                enemy_sprite.custom_size.unwrap(),
-                bullet_trans.translation,
-                bullet_sprite.custom_size.unwrap(),
-            );
-
-            // might want to do rapier instead
-            // https://rapier.rs/docs/user_guides/bevy_plugin/getting_started_bevy
-
-            match collision {
-                Some(_) => {
-                    commands.entity(enemy).despawn();
-                    commands.entity(bullet).despawn();
-                }
-                _ => {}
-            }
         }
     }
 }
@@ -353,53 +367,6 @@ fn bullet_collision_rapier(
                 //commands.entity(enemy).despawn();
             }
         }
-
-        // check all the things the bullet has hit
-        // I think this requires 1 thing to be Sensor
-        // like unity OnTriggerEnter
-
-        // having trouble with events and the world
-        // can't pass a writer and the world both as parameters
-        // can use SystemStates to get around it maybe?
-        // but passing mut world into this system gives me weird errors I can't read
-
-        // for (collider1, collider2, intersecting) in rapier_context.intersections_with(bullet.0) {
-        //     // check if they are actually intersecting
-        //     if intersecting {
-        //         // they aren't in a specific order
-        //         // figure out which one might be the enemy
-        //         let enemy_collider = if collider1 == bullet.0 {
-        //             collider2
-        //         } else {
-        //             collider1
-        //         };
-
-        //         let mut state: SystemState<
-        //             EventWriter<BulletHitEvent>
-
-        //             > = SystemState::new(&mut w);
-
-        //         let ev_bullet_hit = state.get_mut(&mut w);
-
-        //         // try to find an enemy component
-        //         let enemy_component = w.entity(enemy_collider).get::<Enemy>();
-
-        //         // if an enemy component exists, destroy bullet and enemy
-        //         match enemy_component {
-        //             Some(_) => {
-        //                 // w.send_event(BulletHitEvent(
-        //                 //     bullet.1.translation.truncate()
-        //                 // ));
-        //                 ev_bullet_hit.send(BulletHitEvent(
-        //                     bullet.1.translation.truncate()
-        //                 ));
-        //                 commands.entity(collider1).despawn();
-        //                 commands.entity(collider2).despawn();
-        //             }
-        //             _ => {}
-        //         }
-        //     }
-        // }
     }
 }
 
@@ -446,44 +413,12 @@ fn shotgun_check_shots(
             }
         }
     }
-    // when something hits or expires
-    // set the state
-    // then wait for the second one
-    // when we have them both,
-    // check if both hit or exactly one or whatever we're doing
-    // need to do this for each generation
-    // reset on reload? Reset on a new shot
-    // might not work right
-    // can i guarantee bullets are done when you finish reload?
-    // probably not.
-    // but each shot is independant. Shot 0 is different than shot 4.
-    // you'd have to cycle through all shots, reload and shoot again
-    // all before the og shots terminated to conflict
-
-    // component struct ShotgunGauge
-    // vec![num_bullets] of HitPair
-    // struct HitPair
-    // left: Option<bool>
-    // right: Option<bool>
-    // get_both_hit -> Option<bool>
-    // none if still waiting
-    // query<Gauge>
-    // eventReader
-    // when event happens, add to gauge
-
-    // got version 1 to work
-    // but v2 might be better?
-
-    // Version 2
-    // bullets are given ref to each other
-    // first bullet to hit sends message to other bullet
-    // if they expire, no message bc they expire at the same time
-    // if other.hit
-    // event.send(both hit)
-    // event.send(one hit)
 }
 
-fn shotgun_check_gauge(mut q_gauge: Query<&mut ShotgunGauge>) {
+fn shotgun_check_gauge(
+    mut q_gauge: Query<&mut ShotgunGauge>,
+    mut ev_reload: EventWriter<ImmediateReloadEvent>,
+) {
     let mut gauge = q_gauge.single_mut();
 
     for (i, pair) in gauge.hit_pairs.iter_mut().enumerate() {
@@ -491,8 +426,20 @@ fn shotgun_check_gauge(mut q_gauge: Query<&mut ShotgunGauge>) {
         if let Some(left) = pair.left {
             if let Some(right) = pair.right {
                 // for 2 bools, only 4 options
+
+                // I want this to trigger an extra shot,
+                // but reload time is 2s
+                // and bullets can travel for 1s
+                // so getting an extra ammo could be fairly delayed based on how long it takes to hit
+                // and you'd already be halfway through a reload
+                // could be +1 ammo on the next reload. Or quick-reload. Half time or immediate
+                // 0.3s between shots
+                // shot, 0.3, shot, 0.3, shot (immediate best case)
+                // shot, 0.3, shot, 1.0, shot (immediate worst case or half)
+                // shot, 0.3, shot, 2.0, shot (normal reload)
                 if left && right {
                     println!("Both hit. Shot: {:?}", i);
+                    ev_reload.send(ImmediateReloadEvent);
                 } else if !left && !right {
                     println!("Both missed. Shot: {:?}", i);
                 } else if left {
