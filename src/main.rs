@@ -14,6 +14,9 @@ struct MouseWorldPos(Vec2);
 #[derive(Component)]
 pub struct Player;
 
+#[derive(Component)]
+pub struct Wall;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -25,6 +28,7 @@ fn main() {
         .add_plugin(cartridge::CartridgePlugin)
         .add_startup_system(setup)
         .add_startup_system(spawn_player)
+        .add_startup_system(spawn_bounds)
         //.add_startup_system(spawn_enemies)
         .insert_resource(MouseWorldPos(Vec2::ZERO))
         .insert_resource(RapierConfiguration {
@@ -62,6 +66,8 @@ fn spawn_player(mut commands: Commands) {
         })
         .insert(Player)
         .insert(Collider::cuboid(25.0, 25.0))
+        .insert(RigidBody::Dynamic)
+        .insert(LockedAxes::ROTATION_LOCKED)
         .insert(shooting::Gun {
             clip_size: 2,
             shots_left: 2,
@@ -74,6 +80,52 @@ fn spawn_player(mut commands: Commands) {
         .insert(shooting::Shotgun)
         .insert(shooting::ShotgunGauge::new(6))
         .insert(health::Health::new(100));
+}
+
+fn spawn_bounds(mut commands: Commands) {
+    build_wall(
+        &mut commands,
+        Vec2::new(1920., 50.),
+        Vec3::new(0., 540., 0.),
+    );
+    build_wall(
+        &mut commands,
+        Vec2::new(1920., 50.),
+        Vec3::new(0., -540., 0.),
+    );
+    build_wall(
+        &mut commands,
+        Vec2::new(50., 1080.),
+        Vec3::new(960., 0., 0.),
+    );
+    build_wall(
+        &mut commands,
+        Vec2::new(50., 1080.),
+        Vec3::new(-960., 0., 0.),
+    );
+
+    // to put commands.inserts, etc in another fn:
+    // add &mut before the type in the parameters of the helper
+    // and &mut before the variable when calling it
+    // fn this(mut commands: Commands) like normal
+    // helper(&mut commands);                       &mut here
+    // fn helper(mut commands: &mut Commands)       &mut here
+}
+
+fn build_wall(mut commands: &mut Commands, size: Vec2, position: Vec3) {
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::BLACK,
+                custom_size: Some(size),
+                ..default()
+            },
+            transform: Transform::from_translation(position),
+            ..default()
+        })
+        .insert(Collider::cuboid(size.x * 0.5, size.y * 0.5))
+        .insert(RigidBody::Fixed)
+        .insert(Wall);
 }
 
 // systems

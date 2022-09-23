@@ -1,15 +1,14 @@
 use bevy::prelude::*;
 use bevy_rapier2d::prelude::*;
 
-use crate::{cartridge::Cartridge, enemy::Enemy, health::Health, MouseWorldPos, Player};
+use crate::{cartridge::Cartridge, enemy::Enemy, health::Health, MouseWorldPos, Player, Wall};
 
 pub struct ShootingPlugin;
 
 impl Plugin for ShootingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<BulletHitEvent>()
-            .add_event::<ShotgunBulletHitEvent>()
-            .add_event::<ShotgunBulletExpireEvent>()
+            .add_event::<ShotgunBulletEndEvent>()
             .add_event::<ImmediateReloadEvent>()
             .add_system(shoot_bullet)
             .add_system(reload)
@@ -54,6 +53,7 @@ impl Bullet {
     fn change_damage(mut self, damage: u32) -> Self {
         // allows chaining
         // new(dir).change_damage(5)
+        // new().change_x().change_y() might be the accepted pattern
         self.damage = damage;
         self
     }
@@ -86,14 +86,16 @@ pub enum GunState {
     Shooting,
 }
 
-pub struct ShotgunBulletHitEvent {
+struct ShotgunBulletEndEvent {
     side: BulletSide,
     shot_number: u32,
+    reason: BulletEndReason,
 }
 
-struct ShotgunBulletExpireEvent {
-    side: BulletSide,
-    shot_number: u32,
+enum BulletEndReason {
+    HitEnemy,
+    HitWall,
+    Expired,
 }
 
 struct ImmediateReloadEvent;
@@ -321,15 +323,16 @@ fn move_bullet(mut q_bullet: Query<(&mut Transform, &Bullet)>, time: Res<Time>) 
 fn bullet_lifetime(
     mut commands: Commands,
     mut q_bullet: Query<(Entity, &mut Bullet, Option<&ShotgunBullet>)>,
-    mut ev_shotgun_expire: EventWriter<ShotgunBulletExpireEvent>,
+    mut ev_shotgun_end: EventWriter<ShotgunBulletEndEvent>,
     time: Res<Time>,
 ) {
     for (entity, mut bullet, shotgun) in &mut q_bullet {
         if bullet.lifetime.tick(time.delta()).just_finished() {
             if let Some(shotgun) = shotgun {
-                ev_shotgun_expire.send(ShotgunBulletExpireEvent {
+                ev_shotgun_end.send(ShotgunBulletEndEvent {
                     side: shotgun.side,
                     shot_number: shotgun.shot_number,
+                    reason: BulletEndReason::Expired,
                 });
             }
             commands.entity(entity).despawn();
@@ -341,20 +344,20 @@ fn bullet_collision_rapier(
     rapier_context: Res<RapierContext>,
     q_bullets: Query<(Entity, &Transform, &Bullet, Option<&ShotgunBullet>)>,
     mut q_enemies: Query<(Entity, &mut Health), With<Enemy>>,
+    q_walls: Query<(Entity, &Wall)>,
     mut commands: Commands,
-    //mut w: &mut World,
     mut ev_bullet_hit: EventWriter<BulletHitEvent>,
-    mut ev_shotgun_hit: EventWriter<ShotgunBulletHitEvent>,
+    mut ev_shotgun_end: EventWriter<ShotgunBulletEndEvent>,
 ) {
     for bullet in q_bullets.iter() {
         for (enemy, mut hp) in q_enemies.iter_mut() {
             // loop over every bullet and every enemy looking for pairs
             if rapier_context.intersection_pair(bullet.0, enemy) == Some(true) {
                 if let Some(shotgun) = bullet.3 {
-                    //println!("Hit on side: {:?}", shotgun.side);
-                    ev_shotgun_hit.send(ShotgunBulletHitEvent {
+                    ev_shotgun_end.send(ShotgunBulletEndEvent {
                         side: shotgun.side,
                         shot_number: shotgun.shot_number,
+                        reason: BulletEndReason::HitEnemy,
                     });
                 }
 
@@ -367,6 +370,26 @@ fn bullet_collision_rapier(
                 //commands.entity(enemy).despawn();
             }
         }
+
+        for (wall_ent, _) in q_walls.iter() {
+            if rapier_context.intersection_pair(bullet.0, wall_ent) == Some(true) {
+
+                if let Some(shotgun_bullet) = bullet.3 {
+                    ev_shotgun_end.send(ShotgunBulletEndEvent {
+                        side: shotgun_bullet.side,
+                        shot_number: shotgun_bullet.shot_number,
+                        reason: BulletEndReason::HitWall,
+                    });
+                }
+
+                // BulletHitEvent
+                // would go here maybe?
+                // it doesn't really do anything yet.
+                // I made it to test events. But it's ambiguous if a hit is an enemy or wall
+
+                commands.entity(bullet.0).despawn();
+            }
+        }
     }
 }
 
@@ -376,41 +399,44 @@ fn bullet_event(mut ev_bullet_hit: EventReader<BulletHitEvent>) {
     }
 }
 
-fn shotgun_event(mut ev_shotgun_hit: EventReader<ShotgunBulletHitEvent>) {
+fn shotgun_event(mut ev_shotgun_hit: EventReader<ShotgunBulletEndEvent>) {
     for hit in ev_shotgun_hit.iter() {
-        eprintln!(
-            "Shotgun hit on {:?} side. Number: {:?}",
-            hit.side, hit.shot_number
-        );
+        match hit.reason {
+            BulletEndReason::HitEnemy => {
+                eprintln!(
+                    "Shotgun hit on {:?} side. Number: {:?}",
+                    hit.side, hit.shot_number
+                );
+            }
+            _ => (),
+        }
     }
 }
 
 fn shotgun_check_shots(
-    mut ev_shotgun_hit: EventReader<ShotgunBulletHitEvent>,
-    mut ev_shotgun_expire: EventReader<ShotgunBulletExpireEvent>,
+    mut ev_shotgun_end: EventReader<ShotgunBulletEndEvent>,
     mut q_gauge: Query<&mut ShotgunGauge>,
 ) {
     let mut gauge = q_gauge.single_mut();
 
-    for hit in ev_shotgun_hit.iter() {
-        match hit.side {
-            BulletSide::Left => {
-                gauge.hit_pairs[hit.shot_number as usize].left = Some(true);
-            }
-            BulletSide::Right => {
-                gauge.hit_pairs[hit.shot_number as usize].right = Some(true);
-            }
-        }
-    }
-
-    for expire in ev_shotgun_expire.iter() {
-        match expire.side {
-            BulletSide::Left => {
-                gauge.hit_pairs[expire.shot_number as usize].left = Some(false);
-            }
-            BulletSide::Right => {
-                gauge.hit_pairs[expire.shot_number as usize].right = Some(false);
-            }
+    for ev in ev_shotgun_end.iter() {
+        match ev.reason {
+            BulletEndReason::HitEnemy => match ev.side {
+                BulletSide::Left => {
+                    gauge.hit_pairs[ev.shot_number as usize].left = Some(true);
+                }
+                BulletSide::Right => {
+                    gauge.hit_pairs[ev.shot_number as usize].right = Some(true);
+                }
+            },
+            BulletEndReason::Expired | BulletEndReason::HitWall => match ev.side {
+                BulletSide::Left => {
+                    gauge.hit_pairs[ev.shot_number as usize].left = Some(false);
+                }
+                BulletSide::Right => {
+                    gauge.hit_pairs[ev.shot_number as usize].right = Some(false);
+                }
+            },
         }
     }
 }
