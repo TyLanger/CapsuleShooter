@@ -74,6 +74,28 @@ pub struct Gun {
     pub bullet_lifetime: f32,
 }
 
+impl Gun {
+    fn shoot(self, time_since_last_shot: f32) -> Result<(), ShootError> {
+        if self.shots_left <= 0 {
+            return Err(ShootError::OutOfAmmo);
+        }
+        if self.state == GunState::Reloading {
+            return Err(ShootError::Reloading);
+        }
+        if self.time_between_shots > time_since_last_shot {
+            return Err(ShootError::ShotCooldown);
+        }
+
+        Ok(())
+    }
+}
+
+enum ShootError {
+    OutOfAmmo,
+    Reloading,
+    ShotCooldown,
+}
+
 // Ready when you have bullets and aren't waiting for time between shots
 // switch to reloading when you run out of ammo
 // shooting when you click and while waiting for time between shots?
@@ -206,78 +228,36 @@ fn shoot_bullet(
                 };
             }
 
-            commands
-                .spawn_bundle(SpriteBundle {
-                    sprite: Sprite {
-                        color: Color::rgb(0.25, 0.25, 0.75),
-                        custom_size: Some(Vec2::new(10., 20.)),
-                        ..default()
-                    },
-                    transform: Transform {
-                        translation: transform.translation.clone(),
-                        rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
-                        ..default()
-                    },
-                    ..default()
-                })
-                .insert(Bullet::new(
-                    left_dir.truncate(),
-                    gun.bullet_lifetime,
-                    damage,
-                ))
-                .insert(ShotgunBullet {
+            spawn_shotgun_bullet(
+                &mut commands,
+                transform.translation.clone(),
+                left_dir.truncate(),
+                gun.bullet_lifetime,
+                damage,
+                ShotgunBullet {
                     side: BulletSide::Left,
                     shot_number: gun.clip_size - gun.shots_left,
-                })
-                .insert(RigidBody::Dynamic)
-                .insert(Collider::ball(5.0))
-                .insert(Sensor);
-
-            commands
-                .spawn_bundle(SpriteBundle {
-                    sprite: Sprite {
-                        color: Color::rgb(0.25, 0.25, 0.75),
-                        custom_size: Some(Vec2::new(10., 20.)),
-                        ..default()
-                    },
-                    transform: Transform {
-                        translation: transform.translation.clone(),
-                        rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
-                        ..default()
-                    },
-                    ..default()
-                })
-                .insert(Bullet::new(
-                    right_dir.truncate(),
-                    gun.bullet_lifetime,
-                    damage,
-                ))
-                .insert(ShotgunBullet {
+                },
+            );
+            spawn_shotgun_bullet(
+                &mut commands,
+                transform.translation.clone(),
+                right_dir.truncate(),
+                gun.bullet_lifetime,
+                damage,
+                ShotgunBullet {
                     side: BulletSide::Right,
                     shot_number: gun.clip_size - gun.shots_left,
-                })
-                .insert(RigidBody::Dynamic)
-                .insert(Collider::ball(5.0))
-                .insert(Sensor);
+                },
+            );
         } else {
-            commands
-                .spawn_bundle(SpriteBundle {
-                    sprite: Sprite {
-                        color: Color::rgb(0.25, 0.25, 0.75),
-                        custom_size: Some(Vec2::new(10., 20.)),
-                        ..default()
-                    },
-                    transform: Transform {
-                        translation: transform.translation.clone(),
-                        rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
-                        ..default()
-                    },
-                    ..default()
-                })
-                .insert(Bullet::new(dir, gun.bullet_lifetime, damage))
-                .insert(RigidBody::Dynamic)
-                .insert(Collider::ball(5.0))
-                .insert(Sensor);
+            spawn_bullet(
+                &mut commands,
+                transform.translation.clone(),
+                dir,
+                gun.bullet_lifetime,
+                damage,
+            );
         }
 
         gun.shots_left -= 1;
@@ -286,6 +266,59 @@ fn shoot_bullet(
             //gun.reload_timer = Timer::from_seconds(duration, repeating)
         }
     }
+}
+
+fn spawn_bullet(commands: &mut Commands, pos: Vec3, dir: Vec2, lifetime: f32, damage: u32) {
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::rgb(0.25, 0.25, 0.75),
+                custom_size: Some(Vec2::new(10., 20.)),
+                ..default()
+            },
+            transform: Transform {
+                translation: pos,
+                rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(Bullet::new(dir, lifetime, damage))
+        .insert(RigidBody::Dynamic)
+        .insert(Collider::ball(5.0))
+        .insert(Sensor);
+}
+
+fn spawn_shotgun_bullet(
+    commands: &mut Commands,
+    pos: Vec3,
+    dir: Vec2,
+    lifetime: f32,
+    damage: u32,
+    shotgun: impl Component,
+) {
+    commands
+        .spawn_bundle(SpriteBundle {
+            sprite: Sprite {
+                color: Color::rgb(0.25, 0.25, 0.75),
+                custom_size: Some(Vec2::new(10., 20.)),
+                ..default()
+            },
+            transform: Transform {
+                translation: pos,
+                rotation: Quat::from_rotation_arc_2d(Vec2::Y, dir),
+                ..default()
+            },
+            ..default()
+        })
+        .insert(Bullet::new(dir, lifetime, damage))
+        .insert(RigidBody::Dynamic)
+        .insert(Collider::ball(5.0))
+        .insert(Sensor)
+        .insert(shotgun);
+    // insert shotgun is the only difference
+    // I don't know how to make it so I can do
+    // spawn_bullet(...).insert(shotgun)
 }
 
 fn reload(mut q_gun: Query<&mut Gun>, time: Res<Time>) {
@@ -373,7 +406,6 @@ fn bullet_collision_rapier(
 
         for (wall_ent, _) in q_walls.iter() {
             if rapier_context.intersection_pair(bullet.0, wall_ent) == Some(true) {
-
                 if let Some(shotgun_bullet) = bullet.3 {
                     ev_shotgun_end.send(ShotgunBulletEndEvent {
                         side: shotgun_bullet.side,
